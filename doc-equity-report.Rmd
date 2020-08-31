@@ -1,0 +1,173 @@
+---
+header-includes:
+- \input{design/preamble.tex}
+fontsize: 12pt
+output: pdf_document
+sansfont: RobotoCondensed
+font:     RobotoCondensed
+geometry: "left=0.5in,right=0.5in,top=0.35in,bottom=0.5in"
+fig_height: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      dev = "cairo_pdf")
+
+library(ojodb)
+
+pop <- doc_current_pop()
+
+pop_in <- pop %>% 
+  filter(inside == TRUE)
+
+connect_ojo()
+pop_charges <- pop_in %>%
+  left_join(ojo_tbl("doc_sentences") %>%
+              filter(doc_num %in% !!pop_in$doc_num) %>%
+              left_join(ojo_tbl("doc_offense")) %>% 
+              collect())
+
+charges_2020 <- ojo_tbl("doc_sentences") %>% 
+  filter(js_date >= "2019-07-01", doc_incarcerated_term_yrs > 0) %>%
+  left_join(ojo_tbl("doc_offense")) %>% 
+  collect()
+disconnect_ojo()
+
+charges_sum <- charges_2020 %>%
+  group_by(statute_desc) %>% 
+  summarize(n = n(),
+            median_sent = median(doc_incarcerated_term_yrs) %>% 
+              round(1)) %>% 
+  arrange(desc(n)) %>% 
+  mutate(Rank = row_number()) %>% 
+  select(Rank, everything())
+
+```
+
+\ojologo{}
+\ojotitle{Oklahoma DOC Equity Report}
+\ojosubtitle{Data through June 2020}
+\ojoauthors{Prepared by Ryan Gentzler (rgentzler@okpolicy.org)}
+
+## DOC populations by sex
+
+```{r fig.height=3, fig.width=7.5}
+rp <- read_csv("oklahoma race pop 2018.csv")
+
+state_pop <- rp %>% 
+  mutate(race = case_when(race %in% c("WHITE", "BLACK", "HISPANIC") ~ race,
+                          race == "NATIVE AMERICAN" ~ "NATIVE\nAMERICAN",
+                          TRUE ~ "OTHER")) %>% 
+  group_by(race, sex) %>% 
+  summarize(total = sum(pop)) %>% 
+  ungroup %>% 
+  group_by(sex) %>% 
+  mutate(perc = total/sum(total))
+
+doc_race <- pop %>%
+  filter(inside == TRUE) %>% 
+  mutate(race = case_when(race %in% c("WHITE", "BLACK", "HISPANIC") ~ race,
+                          race == "NATIVE AMERICAN" ~ "NATIVE\nAMERICAN",
+                          TRUE ~ "OTHER")) %>% 
+  count(race, sex) %>% 
+  group_by(sex) %>% 
+  mutate(perc = n/sum(n))
+
+d <- state_pop %>%
+  mutate(population = "STATE") %>% 
+  bind_rows(doc_race %>% 
+              mutate(population = "IN PRISON")) %>%
+  mutate(sex = if_else(sex == "M", "MALE", "FEMALE")) %>% 
+  mutate(race = fct_relevel(race,
+                            c("WHITE", "BLACK", "NATIVE\nAMERICAN", "HISPANIC", "OTHER")),
+         population = fct_relevel(population, 
+                                  c("STATE", "IN PRISON")),
+         sex = fct_relevel(sex,
+                           c("MALE", "FEMALE")))
+
+pop %>%
+  mutate(location = if_else(inside == TRUE, "PRISON", "SUPERVISION")) %>%
+  filter(!is.na(location)) %>% 
+  count(sex, location) %>%
+  ggplot(aes(sex, n, fill = sex)) +
+  facet_grid(~location) +
+  geom_col() +
+  theme_ojo() +
+  ojo_fill() +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_discrete(labels = c("FEMALE", "MALE")) +
+  xlab(NULL) +
+  ylab(NULL) +
+  geom_text(aes(y = n + 1000,
+                label = scales::comma(n)),
+            family = "Menlo") +
+  theme(legend.position = "none",
+        title = element_text(size = 11, face = "bold"))
+
+```
+
+## Prison vs. state population by race
+
+```{r fig.height=3, fig.width=7.5}
+ggplot(d, aes(race, perc, fill = population)) +
+  geom_col(position = "dodge") +
+  facet_grid(~sex) +
+  geom_text(aes(y = perc + .01,
+                label = scales::percent(perc, accuracy = 3)),
+            position = position_dodge(1),
+            vjust = 0,
+            family = "Menlo") +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0, .8)) +
+  theme_ojo() +
+  ojo_fill() +
+  xlab(NULL) +
+  ylab(NULL) +
+  theme(legend.title = element_blank(),
+        legend.position = "top",
+        axis.text.x = element_text(size = 8),
+        title = element_text(size = 11, face = "bold"))
+```
+
+\pagebreak
+
+## Top controlling charges for current inmates
+
+```{r}
+top_charges <- pop_charges %>% 
+  filter(!str_detect(statute_desc, "JAIL|CORR")) %>% 
+  mutate(js_fy = date_to_fy(js_date)) %>% 
+  group_by(doc_num) %>% 
+  filter(js_fy == max(js_fy)) %>% 
+  filter(doc_incarcerated_term_yrs == max(doc_incarcerated_term_yrs)) %>% 
+  select(doc_num, statute_desc, doc_incarcerated_term_yrs) %>% 
+  distinct %>% 
+  ungroup %>% 
+  group_by(`Offense` = statute_desc) %>%
+  summarize(Number = n(),
+            `Median Sentence` = median(doc_incarcerated_term_yrs) %>% 
+              round(1)) %>% 
+  mutate(`Median Sentence` = if_else(`Median Sentence` == 7777,
+                                     "LIFE",
+                                     as.character(`Median Sentence`))) %>% 
+  arrange(desc(Number)) %>% 
+  top_n(20, Number) %>% 
+  mutate(Rank = row_number()) %>% 
+  select(Rank, everything())
+
+knitr::kable(top_charges, align = "rlrr")
+
+```
+
+## Top sentenced offenses, FY 2020
+```{r}
+names(charges_sum) <- names(top_charges)
+
+knitr::kable(charges_sum %>% 
+               top_n(20, Number))
+
+```
+
+
