@@ -1,0 +1,159 @@
+---
+header-includes:
+- \input{preamble.tex}
+fontsize: 10pt
+output: pdf_document
+sansfont: RobotoCondensed
+font:     RobotoCondensed
+geometry: "left=1in,right=1in,top=0.35in,bottom=0.6in"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      dev = "cairo_pdf")
+
+library(ojo)
+
+last_quarter_end <- (floor_date(Sys.Date(), "quarter") - days(1)) %>% 
+  as.character
+
+connect_ojo()
+sd <- ojo_tbl("doc_sentences") %>% 
+  filter(js_date >= "2009-07-01",
+         js_date <= last_quarter_end,
+         !is.na(doc_incarcerated_term_yrs)) %>%
+  left_join(ojo_tbl("doc_offense")) %>% 
+  collect()
+
+pd <- ojo_tbl("doc_profile") %>% 
+  filter(doc_num %in% !!sd$doc_num) %>% 
+  collect()
+
+disconnect_ojo()
+
+race_pop <- read_csv("County populations by race, 2010-2018.csv")
+
+sents <- sd %>% 
+  mutate(doc_num = as.integer(doc_num),
+         fy = date_to_fy(js_date),
+         county = str_remove(doc_sentencing_county, " COUNTY.*") %>% 
+           str_trim) %>% 
+  group_by(doc_num, county, fy) %>%
+  arrange(desc(doc_incarcerated_term_yrs)) %>% 
+  slice(1) %>% 
+  left_join(pd %>% 
+              mutate(doc_num = as.integer(doc_num)) %>% 
+              select(doc_num, 
+                     sex,
+                     race))
+
+```
+
+\ojologo{}
+\ojotitle{Oklahoma DOC Equity Report}
+
+# Male and female sentences
+## Sentences by race and fiscal year, all counties
+
+```{r}
+sent_table <- function(county_filter = unique(sents$county), sex_filter = c("M", "F")) {
+  t <- sents %>%
+    filter(county %in% county_filter, sex %in% sex_filter) %>% 
+    ungroup %>% 
+    count(year = fy, race) %>%
+    pivot_wider(names_from = year, values_from = n) %>% 
+    arrange(race)
+  
+  return(t)
+}
+  
+
+perc_table <- function(d) {
+  t <- {{d}} %>%
+    pivot_longer(cols = matches("\\d"), values_to = "n") %>% 
+    group_by(year = name) %>% 
+    summarize(`Percent White` = sum(n[which(race == "WHITE")])/sum(n, na.rm = TRUE),
+              `Percent Black` = sum(n[which(race == "BLACK")])/sum(n, na.rm = TRUE)) %>% 
+    pivot_longer(matches("perc")) %>%
+    mutate(value = paste0(round(value*100, 1), "%")) %>% 
+    pivot_wider(names_from = year, values_from = value)
+  
+  return(t)
+}
+
+amf <- sent_table()
+knitr::kable(amf)
+knitr::kable(perc_table(amf))
+```
+
+## Sentences by race and fiscal year, Tulsa County
+
+```{r}
+tmf <- sent_table("TULSA")
+knitr::kable(tmf)
+knitr::kable(perc_table(tmf))
+```
+
+## Sentences by race and fiscal year, Oklahoma County
+
+```{r}
+omf <- sent_table("OKLAHOMA")
+knitr::kable(omf)
+knitr::kable(perc_table(omf))
+```
+
+\pagebreak
+
+# Female sentences
+## Female sentences by race and fiscal year, all counties
+
+```{r}
+af <- sent_table(sex_filter = "F")
+knitr::kable(af)
+knitr::kable(perc_table(af))
+```
+
+## Female sentences by race and fiscal year, Tulsa County
+
+```{r}
+tf <- sent_table("TULSA", sex_filter = "F")
+knitr::kable(tf)
+knitr::kable(perc_table(tf))
+```
+
+## Female sentences by race and fiscal year, Oklahoma County
+
+```{r}
+of <- sent_table("OKLAHOMA", sex_filter = "F")
+knitr::kable(of)
+knitr::kable(perc_table(of))
+```
+
+\pagebreak
+
+# Male sentences
+## Male sentences by race and fiscal year, all counties
+
+```{r}
+am <- sent_table(sex_filter = "M")
+knitr::kable(am)
+knitr::kable(perc_table(am))
+```
+
+## Male sentences by race and fiscal year, Tulsa County
+
+```{r}
+tm <- sent_table("TULSA", sex_filter = "M")
+knitr::kable(tm)
+knitr::kable(perc_table(tm))
+```
+
+## Male sentences by race and fiscal year, Oklahoma County
+
+```{r}
+om <- sent_table("OKLAHOMA", sex_filter = "M")
+knitr::kable(om)
+knitr::kable(perc_table(om))
+```
