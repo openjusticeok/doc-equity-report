@@ -1,4 +1,4 @@
-library(ojo)
+library(ojodb)
 
 sr_disparity <- state_pop %>%
   select(-perc) %>%
